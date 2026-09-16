@@ -1,6 +1,16 @@
 import { devAdmin, supabase } from './supabase';
 
-const baseUrl = import.meta.env.VITE_API_URL || '/api';
+export function normalizeApiBaseUrl(value?: string) {
+  const configured = value?.trim();
+  if (!configured) return '/api';
+  if (configured.startsWith('/')) return configured.replace(/\/$/, '');
+
+  const url = new URL(/^https?:\/\//i.test(configured) ? configured : `https://${configured}`);
+  if (url.pathname === '/') url.pathname = '/api';
+  return url.toString().replace(/\/$/, '');
+}
+
+const baseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 let redirectingToLogin = false;
 
 export class ApiError extends Error {
