@@ -24,6 +24,18 @@ Websites > Adicionar site > Deploy Web App / Node.js Web App
 
 Use Node.js `22.x` nas duas aplicações.
 
+### Limitação do acesso compartilhado
+
+Mesmo com papel Admin, um usuário com acesso compartilhado não pode adicionar
+um novo site no plano. O titular da conta precisa criar inicialmente as duas
+Node.js Web Apps. Depois disso, deve compartilhar o **plano de hospedagem** — não
+somente o domínio — com o responsável técnico, que poderá administrar os sites
+e suas configurações.
+
+Como o repositório é público, o titular pode colar diretamente
+`https://github.com/zeesterx/ipb-election`; não precisa ter acesso à conta
+GitHub do projeto para concluir essa criação inicial.
+
 ## 1. Criar a API
 
 No hPanel da conta responsável pela hospedagem:
