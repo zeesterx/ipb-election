@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { downloadBatchCodes, downloadCodes, downloadMinutesReport, request } from './api';
+import { ApiError, downloadBatchCodes, downloadCodes, downloadMinutesReport, request } from './api';
 import { devAdmin, supabase } from './supabase';
 import type { Election, NextScrutiny, Office, PublicElection, Scrutiny, Tally } from './types';
 
@@ -753,6 +753,7 @@ function AdminGate() {
   const [access, setAccess] = useState<'checking' | 'allowed' | 'denied'>('checking');
   useEffect(() => {
     let active = true;
+    let retryTimer: number | undefined;
     async function verify() {
       if (!devAdmin) {
         const { data } = await supabase.auth.getSession();
@@ -761,14 +762,22 @@ function AdminGate() {
       try {
         const result = await request<{ authenticated: boolean }>('/admin/session', {}, true);
         if (active) setAccess(result.authenticated ? 'allowed' : 'denied');
-      } catch { if (active) setAccess('denied'); }
+      } catch (cause) {
+        if (!active) return;
+        if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+          setAccess('denied');
+        } else {
+          setAccess('checking');
+          retryTimer = window.setTimeout(() => void verify(), 5_000);
+        }
+      }
     }
     void verify();
-    if (devAdmin) return () => { active = false; };
+    if (devAdmin) return () => { active = false; window.clearTimeout(retryTimer); };
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (active && (event === 'SIGNED_OUT' || !session)) setAccess('denied');
     });
-    return () => { active = false; data.subscription.unsubscribe(); };
+    return () => { active = false; window.clearTimeout(retryTimer); data.subscription.unsubscribe(); };
   }, []);
   if (access === 'checking') return <main className="center"><p>Verificando acesso…</p></main>;
   return access === 'allowed'

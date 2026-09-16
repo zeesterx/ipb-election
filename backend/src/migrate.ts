@@ -2,8 +2,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Database } from './database';
 
-async function main() {
+export async function runMigrations() {
   const directories = [
+    resolve(__dirname, 'migrations'),
     resolve(process.cwd(), '../supabase/migrations'),
     resolve(process.cwd(), 'supabase/migrations')
   ];
@@ -28,7 +29,9 @@ async function main() {
   process.stdout.write(`${migrationFiles.length} database migration(s) applied.\n`);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
-});
+if (require.main === module) {
+  runMigrations().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}

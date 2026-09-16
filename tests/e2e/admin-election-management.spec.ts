@@ -1,5 +1,19 @@
 import { expect, test } from '@playwright/test';
 
+test('permanece estável no carregamento enquanto a API reinicia', async ({ page }) => {
+  await page.route('**/api/admin/session', (route) => route.fulfill({
+    status: 503,
+    contentType: 'text/html',
+    body: '<h1>Service Unavailable</h1>'
+  }));
+
+  await page.goto('/admin');
+  await expect(page.getByText('Verificando acesso…')).toBeVisible();
+  await page.waitForTimeout(1_000);
+  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page.getByText('Serviço temporariamente indisponível')).not.toBeVisible();
+});
+
 test('volta à lista sem conteúdo duplicado e exclui com confirmação', async ({ page }) => {
   const summary = {
     id: 'election-visual-1',

@@ -3,8 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { config } from './config';
+import { runMigrations } from './migrate';
 
 async function bootstrap() {
+  await runMigrations();
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.use(helmet({ crossOriginResourcePolicy: false }));

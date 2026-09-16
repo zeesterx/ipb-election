@@ -3,6 +3,13 @@ import { devAdmin, supabase } from './supabase';
 const baseUrl = import.meta.env.VITE_API_URL || '/api';
 let redirectingToLogin = false;
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 function redirectToLogin() {
   if (devAdmin || redirectingToLogin || typeof window === 'undefined') return;
   redirectingToLogin = true;
@@ -41,7 +48,7 @@ export async function request<T>(path: string, init: RequestInit = {}, admin = f
   }
   const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
   if (admin && (response.status === 401 || response.status === 403)) redirectToLogin();
-  if (!response.ok) throw new Error(await decodeError(response));
+  if (!response.ok) throw new ApiError(await decodeError(response), response.status);
   return response.json() as Promise<T>;
 }
 
