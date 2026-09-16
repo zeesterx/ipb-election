@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 const apiPort = process.env.E2E_API_PORT || '3000';
 const webPort = process.env.E2E_WEB_PORT || '4173';
 const apiURL = `http://127.0.0.1:${apiPort}/api`;
+const reuseExistingServer = process.env.E2E_REUSE_EXISTING_SERVER === 'true';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -21,13 +22,13 @@ export default defineConfig({
     {
       command: 'npm run build -w backend && npm run start:e2e -w backend',
       url: `${apiURL}/health`,
-      reuseExistingServer: false,
+      reuseExistingServer,
       timeout: 120_000
     },
     {
       command: `npm run build -w frontend && npm run preview -w frontend -- --host 127.0.0.1 --port ${webPort}`,
       url: `http://127.0.0.1:${webPort}`,
-      reuseExistingServer: false,
+      reuseExistingServer,
       timeout: 120_000,
       env: {
         VITE_API_URL: apiURL,

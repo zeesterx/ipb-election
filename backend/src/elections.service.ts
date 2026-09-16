@@ -863,19 +863,23 @@ export class ElectionsService {
   async voterAccess(rawCode: unknown) {
     const code = normalizeCode(rawCode);
     if (code.length !== 6) throw new BadRequestException('Digite a senha de seis caracteres.');
+    const codeResult = await this.db.query<{ id: string; election_id: string }>(
+      `select id, election_id from voting_codes
+       where code = $1 and active
+       limit 1`,
+      [code]
+    );
+    const votingCode = codeResult.rows[0];
+    if (!votingCode) throw new BadRequestException('Senha inválida.');
     const open = await this.db.query<ScrutinyRow & { church_name: string }>(
       `select s.*, e.church_name from scrutinies s
        join elections e on e.id = s.election_id
-       where e.status = 'open' and s.status = 'open' limit 1`
+       where e.id = $1 and e.status = 'open' and s.status = 'open'
+       limit 1`,
+      [votingCode.election_id]
     );
     const scrutiny = open.rows[0];
     if (!scrutiny) return { status: 'unavailable' as const };
-    const codeResult = await this.db.query<{ id: string }>(
-      `select id from voting_codes where election_id = $1 and code = $2 and active`,
-      [scrutiny.election_id, code]
-    );
-    const votingCode = codeResult.rows[0];
-    if (!votingCode) throw new BadRequestException('Senha inválida para esta eleição.');
     const existing = await this.db.query(
       'select id from ballots where scrutiny_id = $1 and code_id = $2',
       [scrutiny.id, votingCode.id]
