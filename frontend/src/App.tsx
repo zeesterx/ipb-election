@@ -361,6 +361,13 @@ function CandidateEditor({ title, value, onChange }: { title: string; value: Can
   </div>;
 }
 
+function LockedCandidateList({ title, candidates }: { title: string; candidates: Election['candidates'] }) {
+  return <div className="candidate-editor stack">
+    <div className="section-heading"><div><h3>{title}</h3><p>A votação deste cargo já começou. Esta lista está preservada.</p></div><span className="count-badge">Lista bloqueada</span></div>
+    <div>{candidates.map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}</div>)}</div>
+  </div>;
+}
+
 const prepareCandidates = (candidates: CandidateDraft[]) => candidates
   .map((candidate) => ({ name: candidate.name.trim() }))
   .filter((candidate) => candidate.name);
@@ -512,6 +519,11 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
   const active = election.scrutinies.find((item) => item.status === 'open');
   const closed = [...election.scrutinies].reverse().find((item) => item.status === 'closed');
   const hasStarted = election.scrutinies.length > 0;
+  const elderVotingStarted = election.scrutinies.some((scrutiny) => scrutiny.office === 'elder');
+  const deaconVotingStarted = election.scrutinies.some((scrutiny) => scrutiny.office === 'deacon');
+  const canEditElders = election.status !== 'finished' && election.elderSeats > 0 && !elderVotingStarted;
+  const canEditDeacons = election.status !== 'finished' && election.deaconSeats > 0 && !deaconVotingStarted;
+  const canEditCandidates = canEditElders || canEditDeacons;
 
   useEffect(() => {
     setPresence(election.presentMembers || 0);
@@ -590,10 +602,10 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
   async function saveCandidates() {
     const elderCandidates = prepareCandidates(elderDrafts);
     const deaconCandidates = prepareCandidates(deaconDrafts);
-    if (election.elderSeats > 0 && elderCandidates.length < election.elderSeats) {
+    if (canEditElders && elderCandidates.length < election.elderSeats) {
       setError('Cadastre ao menos tantos indicados a presbítero quanto vagas.'); return;
     }
-    if (election.deaconSeats > 0 && deaconCandidates.length < election.deaconSeats) {
+    if (canEditDeacons && deaconCandidates.length < election.deaconSeats) {
       setError('Cadastre ao menos tantos indicados a diácono quanto vagas.'); return;
     }
     await act(async () => {
@@ -651,8 +663,8 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
         <details><summary>Ver lotes e gerenciar credenciais</summary><div className="tool-drawer stack">{election.status === 'open' && <><div className="inline-form"><label className="field">Gerar mais senhas<input aria-label="Quantidade de senhas" type="number" min="1" max="1000" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><button className="button button--secondary" disabled={busy || quantity < 1 || quantity > 1000} onClick={() => void credentialAct('generate', () => downloadCodes(election.id, quantity), 'Novo lote gerado e baixado.')}>{credentialAction === 'generate' ? 'Gerando senhas…' : 'Gerar e baixar PDF'}</button></div><div className="inline-form"><label className="field">Invalidar senha para voto em papel<input aria-label="Senha para invalidar" maxLength={6} value={invalidCode} onChange={(event) => setInvalidCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))} /></label><button className="button button--secondary" disabled={busy || invalidCode.length !== 6} onClick={() => act(async () => { await request(`/admin/elections/${election.id}/codes/invalidate`, { method: 'POST', body: JSON.stringify({ code: invalidCode }) }, true); setInvalidCode(''); }, 'Senha invalidada para lançamento em papel.')}>Invalidar senha</button></div></>}
           <div className="credential-summary"><strong>{activeCodes}</strong><span>senhas ativas em {election.batches.length} lote(s)</span></div>{election.batches.length > 0 ? <div className="batch-list">{election.batches.map((batch) => <div className="batch-row" key={batch.id}><div><strong>Lote {batch.sequenceNumber}</strong><span>{batch.quantity} geradas · {batch.activeCount} ativas</span></div><div className="batch-actions"><button className="button button--text" disabled={busy} onClick={() => void credentialAct(`download-${batch.id}`, () => downloadBatchCodes(election.id, batch.id), `Lote ${batch.sequenceNumber} baixado novamente.`)}>{credentialAction === `download-${batch.id}` ? 'Baixando…' : 'Baixar novamente'}</button></div></div>)}</div> : <p className="muted">Nenhum lote disponível.</p>}</div></details>
       </section>}
-      <section className="panel stack candidate-management"><div className="section-heading"><div><p className="eyebrow">Candidatos</p><h2>Indicados pelo Conselho</h2><p>{hasStarted ? 'Lista utilizada na eleição.' : 'Os nomes podem ser alterados até a abertura do primeiro escrutínio.'}</p></div>{!hasStarted && election.status !== 'finished' && !editingCandidates && <button className="button button--secondary" onClick={() => setEditingCandidates(true)}>Editar indicados</button>}</div>
-        {editingCandidates ? <div className="stack-lg candidate-editing">{election.elderSeats > 0 && <CandidateEditor title="Indicados a presbítero" value={elderDrafts} onChange={setElderDrafts} />}{election.deaconSeats > 0 && <CandidateEditor title="Indicados a diácono" value={deaconDrafts} onChange={setDeaconDrafts} />}<div className="form-actions"><button className="button button--secondary" disabled={busy} onClick={cancelCandidateEditing}>Cancelar</button><button className="button button--primary" disabled={busy} onClick={() => void saveCandidates()}>{busy ? 'Salvando…' : 'Salvar indicados'}</button></div></div>
+      <section className="panel stack candidate-management"><div className="section-heading"><div><p className="eyebrow">Candidatos</p><h2>Indicados pelo Conselho</h2><p>{election.status === 'finished' ? 'Lista utilizada na eleição.' : 'A lista de cada cargo pode ser alterada até a abertura do primeiro escrutínio daquele cargo.'}</p></div>{canEditCandidates && !editingCandidates && <button className="button button--secondary" onClick={() => setEditingCandidates(true)}>Editar indicados</button>}</div>
+        {editingCandidates ? <div className="stack-lg candidate-editing">{election.elderSeats > 0 && (canEditElders ? <CandidateEditor title="Indicados a presbítero" value={elderDrafts} onChange={setElderDrafts} /> : <LockedCandidateList title="Indicados a presbítero" candidates={election.candidates.filter((candidate) => candidate.office === 'elder')} />)}{election.deaconSeats > 0 && (canEditDeacons ? <CandidateEditor title="Indicados a diácono" value={deaconDrafts} onChange={setDeaconDrafts} /> : <LockedCandidateList title="Indicados a diácono" candidates={election.candidates.filter((candidate) => candidate.office === 'deacon')} />)}<div className="form-actions"><button className="button button--secondary" disabled={busy} onClick={cancelCandidateEditing}>Cancelar</button><button className="button button--primary" disabled={busy} onClick={() => void saveCandidates()}>{busy ? 'Salvando…' : 'Salvar indicados'}</button></div></div>
           : <div className="candidate-groups">{(['elder', 'deacon'] as Office[]).map((office) => election.candidates.some((candidate) => candidate.office === office) && <div key={office}><h3>{officeName(office, true)}</h3>{election.candidates.filter((candidate) => candidate.office === office).map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}</div>)}</div>)}</div>}
       </section>
     </div>;

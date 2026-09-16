@@ -203,27 +203,43 @@ export class ElectionsService {
       const electionResult = await client.query<ElectionRow>('select * from elections where id = $1 for update', [id]);
       const election = electionResult.rows[0];
       if (!election) throw new NotFoundException('Eleição não encontrada.');
-      if (election.status === 'finished') throw new ConflictException('A eleição já foi encerrada.');
 
-      const scrutinyCount = await client.query<{ count: number }>(
-        'select count(*)::int as count from scrutinies where election_id = $1',
+      const scrutinyCounts = await client.query<{ office: Office; count: number }>(
+        `select office, count(*)::int as count
+         from scrutinies where election_id = $1 group by office`,
         [id]
       );
-      if (scrutinyCount.rows[0].count > 0) {
-        throw new ConflictException('Os indicados não podem mudar depois do início do primeiro escrutínio.');
-      }
-      if (election.elder_seats > 0 && elders.length < election.elder_seats) {
-        throw new BadRequestException('Cadastre ao menos tantos indicados a presbítero quanto vagas.');
-      }
-      if (election.deacon_seats > 0 && deacons.length < election.deacon_seats) {
-        throw new BadRequestException('Cadastre ao menos tantos indicados a diácono quanto vagas.');
-      }
+      const currentCandidates = await client.query<{ office: Office; name: string }>(
+        `select office, name from candidates
+         where election_id = $1 order by office, display_order`,
+        [id]
+      );
+      const startedOffices = new Set(
+        scrutinyCounts.rows.filter((row) => Number(row.count) > 0).map((row) => row.office)
+      );
+      const changedOffices: Office[] = [];
 
-      await client.query('delete from candidates where election_id = $1', [id]);
-      for (const [office, candidates] of [
-        ['elder', election.elder_seats > 0 ? elders : []],
-        ['deacon', election.deacon_seats > 0 ? deacons : []]
-      ] as const) {
+      for (const { office, candidates, seats, label } of [
+        { office: 'elder' as const, candidates: election.elder_seats > 0 ? elders : [], seats: election.elder_seats, label: 'presbítero' },
+        { office: 'deacon' as const, candidates: election.deacon_seats > 0 ? deacons : [], seats: election.deacon_seats, label: 'diácono' }
+      ]) {
+        const currentNames = currentCandidates.rows
+          .filter((candidate) => candidate.office === office)
+          .map((candidate) => candidate.name);
+        const requestedNames = candidates.map((candidate) => candidate.name);
+        const changed = currentNames.length !== requestedNames.length ||
+          currentNames.some((name, index) => name !== requestedNames[index]);
+
+        if (!changed) continue;
+        if (election.status === 'finished') throw new ConflictException('A eleição já foi encerrada.');
+        if (startedOffices.has(office)) {
+          throw new ConflictException(`A lista de indicados a ${label} não pode mudar depois do início da votação desse cargo.`);
+        }
+        if (seats > 0 && candidates.length < seats) {
+          throw new BadRequestException(`Cadastre ao menos tantos indicados a ${label} quanto vagas.`);
+        }
+
+        await client.query('delete from candidates where election_id = $1 and office = $2', [id, office]);
         for (const [index, candidate] of candidates.entries()) {
           await client.query(
             `insert into candidates (election_id, office, name, display_order)
@@ -231,11 +247,16 @@ export class ElectionsService {
             [id, office, candidate.name, index + 1]
           );
         }
+        changedOffices.push(office);
       }
-      await this.audit(client, id, actorId, 'candidates.updated', {
-        elderCandidates: elders.length,
-        deaconCandidates: deacons.length
-      });
+
+      if (changedOffices.length > 0) {
+        await this.audit(client, id, actorId, 'candidates.updated', {
+          changedOffices,
+          elderCandidates: elders.length,
+          deaconCandidates: deacons.length
+        });
+      }
       return this.detail(id, client);
     });
   }

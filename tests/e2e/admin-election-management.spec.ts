@@ -80,3 +80,64 @@ test('volta à lista sem conteúdo duplicado e exclui com confirmação', async 
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByRole('heading', { name: 'Nenhuma eleição cadastrada' })).toBeVisible();
 });
+
+test('remove dos diáconos um candidato já eleito presbítero sem alterar o cargo iniciado', async ({ page }) => {
+  const summary = {
+    id: 'election-candidates-1', churchName: 'Eleição com dois cargos', electionDate: '2040-06-20',
+    elderSeats: 1, deaconSeats: 1, status: 'open', currentOffice: 'deacon', codeCount: 10, electedCount: 1
+  };
+  let detail = {
+    ...summary,
+    presentMembers: 10,
+    candidates: [
+      { id: 'elder-john', office: 'elder', name: 'João da Silva', displayOrder: 1, elected: true, electedRound: 1 },
+      { id: 'deacon-john', office: 'deacon', name: 'João da Silva', displayOrder: 1, elected: false, electedRound: null },
+      { id: 'deacon-maria', office: 'deacon', name: 'Maria Souza', displayOrder: 2, elected: false, electedRound: null }
+    ],
+    batches: [{ id: 'batch-1', sequenceNumber: 1, quantity: 10, activeCount: 10, createdAt: '2040-06-20T10:00:00Z' }],
+    scrutinies: [{
+      id: 'elder-round-1', office: 'elder', roundNumber: 1, seatsOpen: 1, maxMarks: 1,
+      majorityRequired: 6, status: 'published', ballotCount: 10, digitalCount: 10,
+      paperCount: 0, blankCount: 4, openedAt: '2040-06-20T10:00:00Z',
+      closedAt: '2040-06-20T10:10:00Z', publishedAt: '2040-06-20T10:15:00Z',
+      results: [{ scrutinyId: 'elder-round-1', candidateId: 'elder-john', name: 'João da Silva', votes: 6, elected: true }]
+    }]
+  };
+  let updateBody: { elderCandidates: Array<{ name: string }>; deaconCandidates: Array<{ name: string }> } | null = null;
+
+  await page.route('**/api/admin/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/admin/session') return route.fulfill({ json: { authenticated: true, actorId: 'test-admin' } });
+    if (path === '/api/admin/elections' && request.method() === 'GET') return route.fulfill({ json: [summary] });
+    if (path === `/api/admin/elections/${summary.id}/next-scrutiny`) {
+      return route.fulfill({ json: { available: true, office: 'deacon', roundNumber: 1, seatsOpen: 1, maxMarks: 1, majorityRequired: 6, candidates: [], defaultCandidateIds: [] } });
+    }
+    if (path === `/api/admin/elections/${summary.id}/candidates` && request.method() === 'PUT') {
+      updateBody = request.postDataJSON();
+      detail = {
+        ...detail,
+        candidates: detail.candidates.filter((candidate) => candidate.id !== 'deacon-john')
+      };
+      return route.fulfill({ json: detail });
+    }
+    if (path === `/api/admin/elections/${summary.id}` && request.method() === 'GET') return route.fulfill({ json: detail });
+    return route.fulfill({ status: 404, json: { message: 'Rota de teste não configurada.' } });
+  });
+
+  await page.goto(`/admin/elections/${summary.id}`);
+  await page.getByRole('button', { name: /Preparação da eleição/ }).click();
+  await page.getByRole('button', { name: 'Editar indicados' }).click();
+
+  await expect(page.getByText('A votação deste cargo já começou. Esta lista está preservada.')).toBeVisible();
+  await expect(page.getByLabel('Nome completo do indicado 1')).toHaveValue('João da Silva');
+  await page.getByRole('button', { name: 'Remover indicado 1' }).click();
+  await expect(page.getByLabel('Nome completo do indicado 1')).toHaveValue('Maria Souza');
+  await page.getByRole('button', { name: 'Salvar indicados' }).click();
+
+  await expect(page.getByText('Lista de indicados atualizada.')).toBeVisible();
+  expect(updateBody).toEqual({
+    elderCandidates: [{ name: 'João da Silva' }],
+    deaconCandidates: [{ name: 'Maria Souza' }]
+  });
+});
