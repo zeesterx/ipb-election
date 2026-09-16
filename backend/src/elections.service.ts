@@ -169,6 +169,28 @@ export class ElectionsService {
     });
   }
 
+  async deleteElection(id: string, actorId: string) {
+    return this.db.transaction(async (client) => {
+      const result = await client.query<Pick<ElectionRow, 'id' | 'church_name'>>(
+        'select id, church_name from elections where id = $1 for update',
+        [id]
+      );
+      const election = result.rows[0];
+      if (!election) throw new NotFoundException('Eleição não encontrada.');
+
+      await this.audit(client, null, actorId, 'election.deleted', {
+        electionId: election.id,
+        churchName: election.church_name
+      });
+      await client.query(
+        'delete from ballots where scrutiny_id in (select id from scrutinies where election_id = $1)',
+        [id]
+      );
+      await client.query('delete from elections where id = $1', [id]);
+      return { deleted: true };
+    });
+  }
+
   async updateCandidates(id: string, body: Record<string, unknown>, actorId: string) {
     const elders = cleanCandidates(body.elderCandidates);
     const deacons = cleanCandidates(body.deaconCandidates);

@@ -34,6 +34,11 @@ export class AdminController {
     return this.elections.create(body, actorId);
   }
 
+  @Delete('elections/:id')
+  deleteElection(@Param('id') id: string, @AdminActor() actorId: string) {
+    return this.elections.deleteElection(id, actorId);
+  }
+
   @Put('elections/:id/candidates')
   updateCandidates(
     @Param('id') id: string,

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { downloadBatchCodes, downloadCodes, downloadMinutesReport, request } from './api';
 import { devAdmin, supabase } from './supabase';
@@ -429,15 +429,23 @@ function CreateElection({ onCreated, onCancel }: { onCreated: (election: Electio
 
 function AdminDashboard() {
   const { electionId } = useParams(); const navigate = useNavigate();
+  const routeElectionId = useRef(electionId); routeElectionId.current = electionId;
   const [elections, setElections] = useState<Array<Pick<Election, 'id' | 'churchName' | 'status' | 'electionDate' | 'elderSeats' | 'deaconSeats'> & { codeCount: number; electedCount: number }>>([]);
   const [selected, setSelected] = useState<Election | null>(null); const [loading, setLoading] = useState(true);
   const [error, setError] = useState(''); const [showCreate, setShowCreate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false); const [deleting, setDeleting] = useState(false);
+  const currentElection = electionId && selected?.id === electionId ? selected : null;
   async function loadList() {
     try { setElections(await request('/admin/elections', {}, true)); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Falha ao carregar.'); }
     finally { setLoading(false); }
   }
   async function loadDetail(id: string) {
-    try { setSelected(await request(`/admin/elections/${id}`, {}, true)); setError(''); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Falha ao carregar.'); }
+    try {
+      const election = await request<Election>(`/admin/elections/${id}`, {}, true);
+      if (routeElectionId.current === id) { setSelected(election); setError(''); }
+    } catch (cause) {
+      if (routeElectionId.current === id) setError(cause instanceof Error ? cause.message : 'Falha ao carregar.');
+    }
   }
   useEffect(() => { void loadList(); }, []);
   useEffect(() => { if (electionId) void loadDetail(electionId); else setSelected(null); }, [electionId]);
@@ -449,14 +457,27 @@ function AdminDashboard() {
     return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', update); };
   }, [electionId]);
   async function logout() { await supabase.auth.signOut(); navigate('/admin/login'); }
+  async function deleteCurrentElection() {
+    if (!currentElection) return;
+    setDeleting(true); setError('');
+    try {
+      await request(`/admin/elections/${currentElection.id}`, { method: 'DELETE' }, true);
+      setElections((items) => items.filter((item) => item.id !== currentElection.id));
+      setSelected(null); setConfirmDelete(false);
+      navigate('/admin');
+      void loadList();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível excluir a eleição.');
+    } finally { setDeleting(false); }
+  }
 
   return <div className="admin-layout"><aside className="sidebar"><Brand compact /><nav aria-label="Administração">
     <p className="sidebar-caption">Gestão</p>
     <Link className={!electionId ? 'active' : ''} to="/admin"><span className="nav-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M8 9h8M8 12h8M8 15h5" /></svg></span><span>Eleições</span></Link>
   </nav><div className="sidebar-footer"><div className="admin-identity"><span>Área segura</span><strong>Acesso admin</strong></div><button className="button button--text sidebar-exit" onClick={logout}><span aria-hidden="true">↪</span> Sair</button></div></aside>
-  <main className="admin-main"><div className="admin-top"><div>{selected && <Link className="back-link" to="/admin">← Todas as eleições</Link>}<p className="eyebrow">Administração</p><h1>{selected ? selected.churchName : showCreate ? 'Nova eleição' : 'Eleições'}</h1>
-      <p>{selected ? `${formatElectionDate(selected.electionDate, { dateStyle: 'long' })} · Acompanhe e conduza cada etapa.` : showCreate ? 'Configure as vagas e os indicados.' : 'Consulte eleições realizadas e prepare uma nova votação.'}</p></div>
-    <div className="top-actions">{!electionId && !showCreate && <button className="button button--primary" onClick={() => setShowCreate(true)}>＋ Nova eleição</button>}
+  <main className="admin-main"><div className="admin-top"><div>{currentElection && <Link className="back-link" to="/admin">← Todas as eleições</Link>}<p className="eyebrow">Administração</p><h1>{currentElection ? currentElection.churchName : showCreate ? 'Nova eleição' : 'Eleições'}</h1>
+      <p>{currentElection ? `${formatElectionDate(currentElection.electionDate, { dateStyle: 'long' })} · Acompanhe e conduza cada etapa.` : showCreate ? 'Configure as vagas e os indicados.' : 'Consulte eleições realizadas e prepare uma nova votação.'}</p></div>
+    <div className="top-actions">{currentElection && <button className="button button--secondary button--danger-text" onClick={() => setConfirmDelete(true)}>Excluir eleição</button>}{!electionId && !showCreate && <button className="button button--primary" onClick={() => setShowCreate(true)}>＋ Nova eleição</button>}
       <Link className="button button--secondary" to="/">Tela de votação</Link></div></div>
     {error && <p className="message message--error">{error}</p>}
     {!electionId && showCreate && <CreateElection onCancel={() => setShowCreate(false)} onCreated={(election) => { void loadList(); setShowCreate(false); navigate(`/admin/elections/${election.id}`); }} />}
@@ -465,7 +486,13 @@ function AdminDashboard() {
       <h2>{item.churchName}</h2><p>{formatElectionDate(item.electionDate, { dateStyle: 'long' })}</p>
       <div className="election-card-meta"><span><strong>{item.elderSeats}</strong> presbítero(s)</span><span><strong>{item.deaconSeats}</strong> diácono(s)</span><span><strong>{item.codeCount}</strong> senhas</span></div>
     </Link>)}</div>}</section>}
-    {selected && <ElectionControl election={selected} refresh={async () => { await Promise.all([loadDetail(selected.id), loadList()]); }} />}
+    {currentElection && <ElectionControl election={currentElection} refresh={async () => { await Promise.all([loadDetail(currentElection.id), loadList()]); }} />}
+    {currentElection && confirmDelete && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !deleting) setConfirmDelete(false); }}>
+      <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-election-title">
+        <div className="confirm-dialog-icon" aria-hidden="true">!</div><div><p className="eyebrow">Ação permanente</p><h2 id="delete-election-title">Excluir esta eleição?</h2><p>A eleição de <strong>{currentElection.churchName}</strong> e todos os candidatos, senhas, votos e resultados vinculados serão excluídos definitivamente.</p></div>
+        <div className="confirm-dialog-actions"><button className="button button--secondary" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancelar</button><button className="button button--danger" disabled={deleting} onClick={() => void deleteCurrentElection()}>{deleting ? 'Excluindo…' : 'Sim, excluir eleição'}</button></div>
+      </section>
+    </div>}
   </main></div>;
 }
 
