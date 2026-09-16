@@ -14,7 +14,7 @@ async function bootstrap() {
     exposedHeaders: ['content-disposition', 'x-batch-number']
   });
   app.enableShutdownHooks();
-  await app.listen(config.PORT, '0.0.0.0');
+  await app.listen(config.PORT, config.HOST);
 }
 
 bootstrap();

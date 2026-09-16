@@ -1,0 +1,110 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-build-deploy:
+    name: Validate, build and deploy
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      VITE_API_URL: ${{ vars.VITE_API_URL }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_DEV_ADMIN: "false"
+      SSH_HOST: ${{ secrets.HOSTINGER_SSH_HOST }}
+      SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
+      SSH_USER: ${{ secrets.HOSTINGER_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.HOSTINGER_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          required=(
+            VITE_API_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_PUBLISHABLE_KEY
+            SSH_HOST
+            SSH_USER
+            SSH_PRIVATE_KEY
+            SSH_KNOWN_HOSTS
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing GitHub production configuration: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate application
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar -czf "${RUNNER_TEMP}/ipb-election-release.tar.gz" \
+            package.json \
+            package-lock.json \
+            backend/package.json \
+            backend/dist \
+            frontend/package.json \
+            frontend/dist \
+            supabase/migrations
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "${HOME}/.ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${HOME}/.ssh/id_ed25519"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/id_ed25519" "${HOME}/.ssh/known_hosts"
+
+      - name: Upload and activate release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          port="${SSH_PORT:-22}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
+          remote_archive="/tmp/ipb-election-${release_id}.tar.gz"
+          ssh_target="${SSH_USER}@${SSH_HOST}"
+
+          scp -P "${port}" \
+            "${RUNNER_TEMP}/ipb-election-release.tar.gz" \
+            "${ssh_target}:${remote_archive}"
+
+          ssh -p "${port}" "${ssh_target}" \
+            "bash -s -- '${release_id}' '${remote_archive}'" \
+            < deploy/remote-deploy.sh
