@@ -38,7 +38,7 @@ jobs:
 
       - name: Build application
         env:
-          VITE_API_URL: https://api-eleicoes.iplavras.org.br/api
+          VITE_API_URL: https://e-api.iplavras.com.br/api
           VITE_SUPABASE_URL: https://example.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: ci-public-placeholder-key
           VITE_DEV_ADMIN: "false"
