@@ -1,10 +1,16 @@
 {
   "name": "ipb-election",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "workspaces": ["backend", "frontend"],
   "scripts": {
     "dev": "concurrently -k -n API,WEB -c green,blue \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w backend && npm run build -w frontend",
+    "build:backend": "npm run build -w backend",
+    "build:frontend": "npm run build -w frontend",
+    "start:backend": "npm run start:production -w backend",
     "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend",
     "test": "npm run test -w backend",
     "test:e2e": "playwright test",

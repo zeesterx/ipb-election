@@ -4,8 +4,8 @@ Aplicação para eleição presencial de presbíteros e diáconos com voto secre
 
 ## Estrutura
 
-- `frontend/`: React 19 + Vite, publicado como arquivos estáticos no Nginx.
-- `backend/`: NestJS, executado como serviço systemd na VPS.
+- `frontend/`: React 19 + Vite, publicado como aplicação gerenciada na Hostinger.
+- `backend/`: NestJS, executado como Node.js Web App gerenciado na Hostinger.
 - `supabase/migrations/`: esquema PostgreSQL acessado diretamente pelo backend.
 - `tests/e2e/`: cenários Playwright móveis, administrativos e de regras.
 - `docs/regras-v2-validacao.md`: especificação funcional breve e atual.
@@ -30,6 +30,6 @@ O modo `AUTH_DEV_BYPASS`/`VITE_DEV_ADMIN` deve permanecer desativado fora dos te
 
 ## Publicação
 
-O deploy de produção usa GitHub Actions, Hostinger VPS, Nginx e systemd. Cada `push` em `main` valida a aplicação, compila frontend e backend, aplica as migrations e ativa a nova release com health check e rollback da aplicação em caso de falha.
+O deploy de produção usa duas Node.js Web Apps gerenciadas pela Hostinger, conectadas à branch `main`: uma para o frontend e outra para a API. A integração nativa da Hostinger publica cada push; o GitHub Actions valida typecheck, testes e build sem receber segredos de produção.
 
 Veja o [passo a passo de deploy na Hostinger](docs/deploy-hostinger.md).
