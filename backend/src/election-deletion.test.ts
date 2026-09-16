@@ -28,6 +28,7 @@ describe('election deletion', () => {
       'select id, church_name from elections where id = $1 for update',
       'insert into audit_events (election_id, actor_id, action, details) values ($1, $2, $3, $4)',
       'delete from ballots where scrutiny_id in (select id from scrutinies where election_id = $1)',
+      'delete from scrutiny_results where scrutiny_id in (select id from scrutinies where election_id = $1)',
       'delete from elections where id = $1'
     ]);
     expect(query.mock.calls[1][1]).toEqual([

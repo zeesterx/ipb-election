@@ -186,6 +186,10 @@ export class ElectionsService {
         'delete from ballots where scrutiny_id in (select id from scrutinies where election_id = $1)',
         [id]
       );
+      await client.query(
+        'delete from scrutiny_results where scrutiny_id in (select id from scrutinies where election_id = $1)',
+        [id]
+      );
       await client.query('delete from elections where id = $1', [id]);
       return { deleted: true };
     });
