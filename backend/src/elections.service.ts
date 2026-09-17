@@ -268,7 +268,7 @@ export class ElectionsService {
 
     const candidates = await connection.query(
         `select id, office, name, display_order as "displayOrder", elected,
-                elected_round as "electedRound"
+                elected_round as "electedRound", declined, declined_round as "declinedRound"
          from candidates where election_id = $1 order by office desc, display_order`,
         [id]
       );
@@ -297,9 +297,10 @@ export class ElectionsService {
       name: string;
       votes: number;
       elected: boolean;
+      accepted: boolean | null;
     }>(
       `select sr.scrutiny_id as "scrutinyId", sr.candidate_id as "candidateId", c.name,
-              sr.votes::int as votes, sr.elected
+              sr.votes::int as votes, sr.elected, sr.accepted
        from scrutiny_results sr
        join candidates c on c.id = sr.candidate_id
        join scrutinies s on s.id = sr.scrutiny_id
@@ -546,7 +547,7 @@ export class ElectionsService {
        left join scrutinies previous on previous.election_id = c.election_id
          and previous.office = c.office and previous.round_number = 2 and previous.status = 'published'
        left join scrutiny_results sr on sr.scrutiny_id = previous.id and sr.candidate_id = c.id
-       where c.election_id = $1 and c.office = $2 and not c.elected
+       where c.election_id = $1 and c.office = $2 and not c.elected and not c.declined
        order by coalesce(sr.votes, 0) desc, c.display_order`,
       [id, office]
     );
@@ -815,8 +816,9 @@ export class ElectionsService {
     };
   }
 
-  async publish(scrutinyId: string, rawWinnerIds: unknown, actorId: string) {
+  async publish(scrutinyId: string, rawWinnerIds: unknown, rawAcceptances: unknown, actorId: string) {
     const requestedWinnerIds = Array.isArray(rawWinnerIds) ? [...new Set(rawWinnerIds.map(String))] : undefined;
+    const acceptanceRows = Array.isArray(rawAcceptances) ? rawAcceptances : undefined;
     return this.db.transaction(async (client) => {
       const scrutinyResult = await client.query<ScrutinyRow>('select * from scrutinies where id = $1 for update', [scrutinyId]);
       const scrutiny = scrutinyResult.rows[0];
@@ -838,16 +840,41 @@ export class ElectionsService {
         throw new BadRequestException('A seleção de eleitos não corresponde aos candidatos que atingiram a maioria.');
       }
 
+      const acceptances = new Map<string, boolean>();
+      if (acceptanceRows) {
+        for (const value of acceptanceRows) {
+          const record = typeof value === 'object' && value !== null ? value as Record<string, unknown> : null;
+          const candidateId = String(record?.candidateId ?? '');
+          if (!candidateId || typeof record?.accepted !== 'boolean' || acceptances.has(candidateId)) {
+            throw new BadRequestException('Informe uma decisão válida e única para cada candidato aprovado.');
+          }
+          acceptances.set(candidateId, record.accepted);
+        }
+      }
+      if (acceptances.size !== winnerIds.length || winnerIds.some((id) => !acceptances.has(id)) ||
+        [...acceptances.keys()].some((id) => !winnerIds.includes(id))) {
+        throw new BadRequestException('Confirme se cada candidato aprovado aceitou ou não a eleição.');
+      }
+
+      const acceptedWinnerIds = winnerIds.filter((id) => acceptances.get(id) === true);
+      const declinedWinnerIds = winnerIds.filter((id) => acceptances.get(id) === false);
+
       for (const candidate of tally.candidates) {
-        const elected = winnerIds.includes(candidate.id);
+        const accepted = winnerIds.includes(candidate.id) ? acceptances.get(candidate.id)! : null;
+        const elected = accepted === true;
         await client.query(
-          `insert into scrutiny_results (scrutiny_id, candidate_id, votes, elected)
-           values ($1, $2, $3, $4)`,
-          [scrutinyId, candidate.id, candidate.votes, elected]
+          `insert into scrutiny_results (scrutiny_id, candidate_id, votes, elected, accepted)
+           values ($1, $2, $3, $4, $5)`,
+          [scrutinyId, candidate.id, candidate.votes, elected, accepted]
         );
         if (elected) {
           await client.query(
             'update candidates set elected = true, elected_round = $2 where id = $1',
+            [candidate.id, scrutiny.round_number]
+          );
+        } else if (accepted === false) {
+          await client.query(
+            'update candidates set declined = true, declined_round = $2 where id = $1',
             [candidate.id, scrutiny.round_number]
           );
         }
@@ -860,7 +887,12 @@ export class ElectionsService {
         'select count(*)::int as count from candidates where election_id = $1 and office = $2 and elected',
         [election.id, scrutiny.office]
       );
-      const officeFinished = electedCount.rows[0].count >= seats || scrutiny.round_number >= 3;
+      const eligibleCount = await client.query<{ count: number }>(
+        `select count(*)::int as count from candidates
+         where election_id = $1 and office = $2 and not elected and not declined`,
+        [election.id, scrutiny.office]
+      );
+      const officeFinished = electedCount.rows[0].count >= seats || scrutiny.round_number >= 3 || eligibleCount.rows[0].count === 0;
       if (officeFinished) {
         const nextOffice: Office | null = scrutiny.office === 'elder' && election.deacon_seats > 0 ? 'deacon' : null;
         await client.query(
@@ -870,7 +902,8 @@ export class ElectionsService {
       }
       await this.audit(client, election.id, actorId, 'scrutiny.published', {
         scrutinyId,
-        winnerIds,
+        acceptedWinnerIds,
+        declinedWinnerIds,
         requiredManualSelection: tally.requiresAdminSelection
       });
       return this.detail(election.id, client);

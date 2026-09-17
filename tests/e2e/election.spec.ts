@@ -186,7 +186,7 @@ test('acompanhamento atualiza votos, exibe lotes e publica resultados na projeç
   const nextTimelineStep = projection.getByRole('button', { name: /2º escrutínio de presbíteros Aguardando/ });
   await nextTimelineStep.click();
   await expect(nextTimelineStep).toHaveAttribute('aria-expanded', 'true');
-  await expect(currentTimelineStep).toHaveAttribute('aria-expanded', 'true');
+  await expect(currentTimelineStep).toHaveAttribute('aria-expanded', 'false');
 
   const detail = await (await request.get(`${api}/admin/elections/${election.id}`, { headers: adminHeaders })).json();
   const candidate = detail.candidates.find((item: { name: string }) => item.name === 'André Silva');
@@ -208,6 +208,8 @@ test('acompanhamento atualiza votos, exibe lotes e publica resultados na projeç
   await page.getByRole('button', { name: 'Salvar todos os votos em papel' }).click();
   await expect(page.getByText('Apuração dos votos em papel salva em conjunto.')).toBeVisible();
   await expect(page.locator('.summary-metrics').getByText('2 de 3', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Aprovar e publicar resultado' })).toBeDisabled();
+  await page.getByLabel('Sim, aceitou').check();
   await page.getByRole('button', { name: 'Aprovar e publicar resultado' }).click();
   await expect(page.getByText('Resultado publicado.')).toBeVisible();
   const adminPublishedStep = page.getByRole('button', { name: /1º escrutínio de presbíteros Concluída/ });
@@ -262,16 +264,17 @@ test('três escrutínios, escolha no empate de corte e sequência para diáconos
   await vote(request, code, [elders[0].id]);
   await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
   await adminPost(request, `/admin/scrutinies/${scrutiny.id}/paper-ballots`, { candidateIds: [elders[0].id] });
-  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, { winnerIds: [elders[0].id] });
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [elders[0].id],
+    acceptances: [{ candidateId: elders[0].id, accepted: true }]
+  });
 
   const projection = await page.context().newPage();
   await projection.goto(`/resultado/${election.id}`);
   const partialResults = projection.locator('.current-results-card');
-  await expect(partialResults).toContainText('André');
-  await expect(partialResults).toContainText('Bruno');
-  await expect(partialResults).toContainText('Carlos');
-  await expect(partialResults).toContainText('Daniel');
-  await expect(partialResults.getByText('Eleito no 3º escrutínio')).toBeVisible();
+  await expect(partialResults).toContainText('Eduardo');
+  await expect(partialResults).toContainText('Felipe');
+  await expect(partialResults).not.toContainText('André');
 
   const deaconNext = await next(request, election.id);
   expect(deaconNext.office).toBe('deacon');
@@ -285,7 +288,10 @@ test('três escrutínios, escolha no empate de corte e sequência para diáconos
   await vote(request, code, [deaconId]);
   await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
   await adminPost(request, `/admin/scrutinies/${scrutiny.id}/paper-ballots`, { candidateIds: [deaconId] });
-  const completed = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, { winnerIds: [deaconId] })).json();
+  const completed = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [deaconId],
+    acceptances: [{ candidateId: deaconId, accepted: true }]
+  })).json();
   expect(completed.status).toBe('finished');
   expect(completed.scrutinies.filter((item: { office: string }) => item.office === 'elder')).toHaveLength(3);
   await page.goto(`/admin/elections/${election.id}`);
@@ -317,9 +323,68 @@ test('mesa escolhe os eleitos quando aprovados excedem as vagas', async ({ reque
   const rejected = await request.post(`${api}/admin/scrutinies/${scrutiny.id}/publish`, { headers: adminHeaders, data: {} });
   expect(rejected.status()).toBe(400);
   const result = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
-    winnerIds: [candidates[0].id, candidates[2].id]
+    winnerIds: [candidates[0].id, candidates[2].id],
+    acceptances: [
+      { candidateId: candidates[0].id, accepted: true },
+      { candidateId: candidates[2].id, accepted: true }
+    ]
   })).json();
   expect(result.candidates.filter((candidate: { elected: boolean }) => candidate.elected).map((candidate: { name: string }) => candidate.name)).toEqual(['A', 'C']);
+});
+
+test('candidato que não aceita sai dos próximos escrutínios sem preencher a vaga', async ({ request }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'), 'Fluxo de API executado uma vez');
+  const election = await createElection(request, { elderCandidates: ['Aceita depois', 'Recusa', 'Terceiro'] });
+  await generateCodes(request, election.id, 3);
+  await adminPost(request, `/admin/elections/${election.id}/open`);
+  await adminPost(request, `/admin/elections/${election.id}/presence`, { presentMembers: 3 });
+
+  const initial = await (await request.get(`${api}/admin/elections/${election.id}`, { headers: adminHeaders })).json();
+  const refused = initial.candidates.find((candidate: { name: string }) => candidate.name === 'Recusa');
+  const accepted = initial.candidates.find((candidate: { name: string }) => candidate.name === 'Aceita depois');
+
+  let scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+  let paper = await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: { ballotCount: 2, candidateVotes: [{ candidateId: refused.id, votes: 2 }] }
+  });
+  expect(paper.ok()).toBeTruthy();
+  const missingAcceptance = await request.post(`${api}/admin/scrutinies/${scrutiny.id}/publish`, {
+    headers: adminHeaders,
+    data: { winnerIds: [refused.id] }
+  });
+  expect(missingAcceptance.status()).toBe(400);
+  let detail = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [refused.id],
+    acceptances: [{ candidateId: refused.id, accepted: false }]
+  })).json();
+
+  expect(detail.candidates.find((candidate: { id: string }) => candidate.id === refused.id)).toMatchObject({
+    elected: false, declined: true, declinedRound: 1
+  });
+  expect(detail.scrutinies[0].results.find((result: { candidateId: string }) => result.candidateId === refused.id)).toMatchObject({
+    votes: 2, elected: false, accepted: false
+  });
+
+  const second = await next(request, election.id);
+  expect(second.roundNumber).toBe(2);
+  expect(second.seatsOpen).toBe(1);
+  expect(second.candidates.map((candidate: { name: string }) => candidate.name)).not.toContain('Recusa');
+
+  scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+  paper = await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: { ballotCount: 2, candidateVotes: [{ candidateId: accepted.id, votes: 2 }] }
+  });
+  expect(paper.ok()).toBeTruthy();
+  detail = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [accepted.id],
+    acceptances: [{ candidateId: accepted.id, accepted: true }]
+  })).json();
+  expect(detail.status).toBe('finished');
+  expect(detail.candidates.find((candidate: { id: string }) => candidate.id === accepted.id)).toMatchObject({ elected: true, electedRound: 2 });
 });
 
 async function nextAfterStart(request: APIRequestContext, electionId: string) {

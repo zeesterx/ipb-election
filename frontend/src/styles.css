@@ -232,6 +232,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--green-800); box
 .admin-choices span, .admin-choices small { display: block; }
 .admin-choices small { margin-top: .15rem; color: var(--muted); }
 .admin-choices.compact { margin-top: .75rem; }
+.acceptance-panel { padding: 1rem; background: #f7faf8; border: 1px solid #d8e4dc; border-radius: 12px; }
+.acceptance-panel h3 { margin-bottom: .25rem; }
+.acceptance-panel > div > p:last-child { font-size: .82rem; }
+.acceptance-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
+.acceptance-list fieldset { min-width: 0; padding: .85rem; margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+.acceptance-list legend { max-width: 100%; padding: 0 .25rem; color: var(--ink); font-size: .86rem; font-weight: 600; }
+.acceptance-list label { display: flex; align-items: center; gap: .5rem; padding: .45rem .5rem; color: #425048; border-radius: 8px; cursor: pointer; font-size: .82rem; }
+.acceptance-list label:hover { background: var(--green-50); }
+.acceptance-list input { width: 18px; min-height: 18px; flex: 0 0 18px; accent-color: var(--green-800); }
 .live-panel { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 1.5rem; border-color: #8ebca0; box-shadow: 0 10px 28px rgba(0,61,37,.07); }
 .live-eyebrow { display: flex; align-items: center; gap: .4rem; color: #167043; }
 .live-eyebrow span { width: 8px; height: 8px; background: #22a25b; border-radius: 50%; box-shadow: 0 0 0 4px #dcf3e6; }
@@ -446,6 +455,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--green-800); box
 .candidate-result-row { display: flex; align-items: center; gap: .65rem; padding: .55rem 0; border-bottom: 1px solid #edf0ee; }
 .candidate-result-row > span:first-child { min-width: 0; flex: 1; overflow-wrap: anywhere; font-weight: 550; }
 .elected-badge { flex: 0 0 auto; padding: .2rem .5rem; color: #175f3a; background: #dff1e7; border-radius: 100px; font-size: .7rem; font-weight: 650; }
+.declined-badge { flex: 0 0 auto; padding: .2rem .5rem; color: #7f3030; background: #f9e7e7; border-radius: 100px; font-size: .7rem; font-weight: 650; }
+.result-ranking > .is-declined { background: #fff9f9; }
+.result-candidate em.declined-label { color: #852f2f; background: #f9e5e5; }
 .candidate-editing { padding-top: .5rem; border-top: 1px solid var(--line); }
 .candidate-editing .candidate-editor + .candidate-editor { padding-top: 1.25rem; border-top: 1px solid var(--line); }
 .final-report { border-color: #b8d2c2; }
@@ -525,6 +537,7 @@ details summary { color: var(--green-800); cursor: pointer; font-size: .87rem; f
   .review-strip { grid-template-columns: 1fr; }
   .summary-metrics { grid-template-columns: 1fr 1fr; }
   .admin-choices { grid-template-columns: 1fr; }
+  .acceptance-list { grid-template-columns: 1fr; }
   .paper-row { align-items: flex-start; flex-direction: column; }
   .paper-entry-heading, .paper-entry-action { align-items: stretch; flex-direction: column; }
   .paper-entry-heading > span { width: fit-content; }

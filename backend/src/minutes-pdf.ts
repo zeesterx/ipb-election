@@ -8,7 +8,7 @@ export interface MinutesWinner {
 
 export async function createMinutesPdf(input: {
   churchName: string;
-  electionDate: string;
+  electionDate: string | Date;
   presentMembers: number | null;
   elders: MinutesWinner[];
   deacons: MinutesWinner[];
@@ -33,7 +33,10 @@ export async function createMinutesPdf(input: {
   const muted = '#5f6964';
   const line = '#cfd6d2';
 
-  const formattedDate = new Date(`${input.electionDate.slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR', {
+  const electionDate = input.electionDate instanceof Date
+    ? input.electionDate.toISOString().slice(0, 10)
+    : input.electionDate.slice(0, 10);
+  const formattedDate = new Date(`${electionDate}T12:00:00`).toLocaleDateString('pt-BR', {
     day: '2-digit', month: 'long', year: 'numeric'
   });
 

@@ -7,6 +7,8 @@ export interface Candidate {
   displayOrder: number;
   elected: boolean;
   electedRound: number | null;
+  declined: boolean;
+  declinedRound: number | null;
 }
 
 export interface Scrutiny {
@@ -24,7 +26,7 @@ export interface Scrutiny {
   openedAt: string;
   closedAt: string | null;
   publishedAt: string | null;
-  results: Array<{ scrutinyId: string; candidateId: string; name: string; votes: number; elected: boolean }>;
+  results: Array<{ scrutinyId: string; candidateId: string; name: string; votes: number; elected: boolean; accepted: boolean | null }>;
 }
 
 export interface Election {

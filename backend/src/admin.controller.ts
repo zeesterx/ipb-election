@@ -191,7 +191,7 @@ export class AdminController {
     @Body() body: Record<string, unknown>,
     @AdminActor() actorId: string
   ) {
-    return this.elections.publish(id, body.winnerIds, actorId);
+    return this.elections.publish(id, body.winnerIds, body.acceptances, actorId);
   }
 
   @Get('elections/:id/audit')

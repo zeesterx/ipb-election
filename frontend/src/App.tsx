@@ -71,9 +71,10 @@ function buildElectionTimeline(election: ElectionSummary) {
       if (scrutiny) {
         state = scrutiny.status === 'published' ? 'complete' : 'current';
         const electedHere = scrutiny.results.filter((result) => result.elected).map((result) => result.name);
+        const declinedHere = scrutiny.results.filter((result) => result.accepted === false).map((result) => result.name);
         detail = scrutiny.status === 'open' ? `${countLabel(scrutiny.ballotCount, 'voto')} recebido${scrutiny.ballotCount === 1 ? '' : 's'}`
           : scrutiny.status === 'closed' ? `${countLabel(scrutiny.ballotCount, 'voto')} recebido${scrutiny.ballotCount === 1 ? '' : 's'} · em conferência`
-            : electedHere.length > 0 ? `${electedHere.join(', ')} eleito(s)` : 'Resultado publicado';
+            : [electedHere.length > 0 ? `${electedHere.join(', ')} eleito(s)` : '', declinedHere.length > 0 ? `${declinedHere.join(', ')} não aceitou` : ''].filter(Boolean).join(' · ') || 'Resultado publicado';
       } else if (officeDone) {
         state = 'skipped'; detail = 'Não foi necessário';
       } else if (election.currentOffice === office && !hasPending && round === nextRound) {
@@ -135,8 +136,8 @@ function ScrutinyResultCard({ scrutiny, presentMembers, embedded = false }: { sc
       <div className="result-meta"><span><strong>{scrutiny.ballotCount} de {presentMembers ?? '—'}</strong> recebidos · {percentageLabel(scrutiny.ballotCount, presentMembers)}</span><span><strong>{scrutiny.majorityRequired}</strong> maioria</span></div></header>
     <div className="result-ranking">{scrutiny.results.map((result) => {
       const percentage = presentMembers ? Math.min(100, Math.round((result.votes / presentMembers) * 100)) : 0;
-      return <div className={result.elected ? 'is-elected' : ''} key={result.candidateId}>
-        <div className="result-candidate"><span>{result.name}{result.elected && <em>Eleito neste escrutínio</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
+      return <div className={result.elected ? 'is-elected' : result.accepted === false ? 'is-declined' : ''} key={result.candidateId}>
+        <div className="result-candidate"><span>{result.name}{result.elected && <em>Eleito neste escrutínio</em>}{result.accepted === false && <em className="declined-label">Não aceitou</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
         <strong>{result.votes}<small> {result.votes === 1 ? 'voto' : 'votos'} · {percentageLabel(result.votes, presentMembers)}</small></strong>
       </div>;
     })}</div>
@@ -158,6 +159,7 @@ function CurrentPartialResults({ election }: { election: ElectionSummary & { pre
     return { ...candidate, latestResult };
   }).sort((a, b) => {
     if (a.elected !== b.elected) return a.elected ? -1 : 1;
+    if (a.declined !== b.declined) return a.declined ? 1 : -1;
     const votes = (b.latestResult?.votes ?? -1) - (a.latestResult?.votes ?? -1);
     return votes || a.displayOrder - b.displayOrder;
   });
@@ -170,8 +172,8 @@ function CurrentPartialResults({ election }: { election: ElectionSummary & { pre
       <div className="result-ranking">{candidates.map((candidate) => {
         const votes = candidate.latestResult?.votes;
         const percentage = votes !== undefined && election.presentMembers ? Math.min(100, Math.round((votes / election.presentMembers) * 100)) : 0;
-        return <div className={candidate.elected ? 'is-elected' : ''} key={candidate.id}>
-          <div className="result-candidate"><span>{candidate.name}{candidate.electedRound && <em>Eleito no {candidate.electedRound}º escrutínio</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
+        return <div className={candidate.elected ? 'is-elected' : candidate.declined ? 'is-declined' : ''} key={candidate.id}>
+          <div className="result-candidate"><span>{candidate.name}{candidate.electedRound && <em>Eleito no {candidate.electedRound}º escrutínio</em>}{candidate.declinedRound && <em className="declined-label">Não aceitou no {candidate.declinedRound}º escrutínio</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
           {votes === undefined ? <span className="result-awaiting">Aguardando</span> : <strong>{votes}<small> {votes === 1 ? 'voto' : 'votos'} · {percentageLabel(votes, election.presentMembers)}</small></strong>}
         </div>;
       })}</div>
@@ -364,7 +366,7 @@ function CandidateEditor({ title, value, onChange }: { title: string; value: Can
 function LockedCandidateList({ title, candidates }: { title: string; candidates: Election['candidates'] }) {
   return <div className="candidate-editor stack">
     <div className="section-heading"><div><h3>{title}</h3><p>A votação deste cargo já começou. Esta lista está preservada.</p></div><span className="count-badge">Lista bloqueada</span></div>
-    <div>{candidates.map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}</div>)}</div>
+    <div>{candidates.map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}{candidate.declined && <span className="declined-badge">Não aceitou</span>}</div>)}</div>
   </div>;
 }
 
@@ -512,6 +514,7 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
   const [paperBallotCount, setPaperBallotCount] = useState(0);
   const [paperCandidateVotes, setPaperCandidateVotes] = useState<Record<string, number>>({});
   const [winners, setWinners] = useState<string[]>([]); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false);
+  const [acceptances, setAcceptances] = useState<Record<string, boolean>>({});
   const [confirmClose, setConfirmClose] = useState(false);
   const [editingCandidates, setEditingCandidates] = useState(false);
   const [elderDrafts, setElderDrafts] = useState<CandidateDraft[]>(() => election.candidates.filter((candidate) => candidate.office === 'elder').map((candidate) => candidateDraft(candidate.name)));
@@ -561,6 +564,7 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
 
   function applyTally(value: Tally) {
     setTally(value); setWinners(value.suggestedWinnerIds);
+    setAcceptances({});
     setPaperBallotCount(value.totals.paperCount);
     setPaperCandidateVotes(Object.fromEntries(value.candidates.map((candidate) => [candidate.id, candidate.paperVotes])));
   }
@@ -634,6 +638,8 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
       const votes = paperCandidateVotes[candidate.id] || 0;
       return Number.isInteger(votes) && votes >= 0 && votes <= paperBallotCount;
     }) && paperBlankTotal >= 0;
+  const winnerSelectionComplete = !tally?.requiresAdminSelection || winners.length === closed?.seatsOpen;
+  const acceptanceComplete = winners.every((candidateId) => typeof acceptances[candidateId] === 'boolean');
 
   function renderAdminTimelineStep(step: TimelineStep) {
     if (step.key === 'preparation') return <div className="timeline-admin-stack">
@@ -665,7 +671,7 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
       </section>}
       <section className="panel stack candidate-management"><div className="section-heading"><div><p className="eyebrow">Candidatos</p><h2>Indicados pelo Conselho</h2><p>{election.status === 'finished' ? 'Lista utilizada na eleição.' : 'A lista de cada cargo pode ser alterada até a abertura do primeiro escrutínio daquele cargo.'}</p></div>{canEditCandidates && !editingCandidates && <button className="button button--secondary" onClick={() => setEditingCandidates(true)}>Editar indicados</button>}</div>
         {editingCandidates ? <div className="stack-lg candidate-editing">{election.elderSeats > 0 && (canEditElders ? <CandidateEditor title="Indicados a presbítero" value={elderDrafts} onChange={setElderDrafts} /> : <LockedCandidateList title="Indicados a presbítero" candidates={election.candidates.filter((candidate) => candidate.office === 'elder')} />)}{election.deaconSeats > 0 && (canEditDeacons ? <CandidateEditor title="Indicados a diácono" value={deaconDrafts} onChange={setDeaconDrafts} /> : <LockedCandidateList title="Indicados a diácono" candidates={election.candidates.filter((candidate) => candidate.office === 'deacon')} />)}<div className="form-actions"><button className="button button--secondary" disabled={busy} onClick={cancelCandidateEditing}>Cancelar</button><button className="button button--primary" disabled={busy} onClick={() => void saveCandidates()}>{busy ? 'Salvando…' : 'Salvar indicados'}</button></div></div>
-          : <div className="candidate-groups">{(['elder', 'deacon'] as Office[]).map((office) => election.candidates.some((candidate) => candidate.office === office) && <div key={office}><h3>{officeName(office, true)}</h3>{election.candidates.filter((candidate) => candidate.office === office).map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}</div>)}</div>)}</div>}
+          : <div className="candidate-groups">{(['elder', 'deacon'] as Office[]).map((office) => election.candidates.some((candidate) => candidate.office === office) && <div key={office}><h3>{officeName(office, true)}</h3>{election.candidates.filter((candidate) => candidate.office === office).map((candidate) => <div className="candidate-result-row" key={candidate.id}><span>{candidate.name}</span>{candidate.elected && <span className="elected-badge">Eleito no {candidate.electedRound}º</span>}{candidate.declined && <span className="declined-badge">Não aceitou</span>}</div>)}</div>)}</div>}
       </section>
     </div>;
 
@@ -678,7 +684,13 @@ function ElectionControl({ election, refresh }: { election: Election; refresh: (
       <section className="paper-entry stack"><div className="paper-entry-heading"><div><p className="eyebrow">Votação excepcional</p><h3>Apuração conjunta dos votos em papel</h3><p>Informe uma vez o total de cédulas e quantos votos cada candidato recebeu no papel.</p></div><span>{tally.totals.ballotCount} de {election.presentMembers ?? '—'} recebidos · {percentageLabel(tally.totals.ballotCount, election.presentMembers)}</span></div><label className="field paper-total-field">Total de cédulas em papel<input aria-label="Total de cédulas em papel" type="number" min="0" max={maxPaperBallots} value={paperBallotCount} onChange={(event) => setPaperBallotCount(Number(event.target.value) || 0)} /><small>Podem ser informadas até {maxPaperBallots}, considerando os {tally.totals.digitalCount} votos digitais já recebidos.</small></label>
         <div className="paper-totals-table"><div className="paper-totals-head"><span>Candidato</span><span>Digital</span><span>Papel</span><span>Total</span></div>{tally.candidates.map((candidate) => <div className="paper-total-row" key={candidate.id}><span><strong>{candidate.name}</strong></span><span>{candidate.digitalVotes}</span><label><span className="sr-only">Votos em papel para {candidate.name}</span><input aria-label={`Votos em papel para ${candidate.name}`} type="number" min="0" max={paperBallotCount} value={paperCandidateVotes[candidate.id] || 0} onChange={(event) => setPaperCandidateVotes((current) => ({ ...current, [candidate.id]: Number(event.target.value) || 0 }))} /></label><strong>{candidate.digitalVotes + (paperCandidateVotes[candidate.id] || 0)}</strong></div>)}</div>
         <div className={`paper-calculation ${paperTotalsValid ? '' : 'is-invalid'}`}><span>Total após salvar: <strong>{tally.totals.digitalCount + paperBallotCount} de {election.presentMembers ?? '—'} recebidos · {percentageLabel(tally.totals.digitalCount + paperBallotCount, election.presentMembers)}</strong></span><span>Votos em branco calculados: <strong>{Math.max(0, paperBlankTotal)}</strong></span></div>{!paperTotalsValid && <p className="message message--error">Confira as quantidades: cada candidato pode receber no máximo {paperBallotCount} voto(s) em papel e o total recebido não pode passar de {election.presentMembers}.</p>}<div className="paper-entry-action"><p>Ao salvar, a apuração anterior em papel será substituída por estes totais.</p><button className="button button--secondary" disabled={busy || !paperTotalsValid} onClick={() => void savePaperTotals()}>{busy ? 'Salvando apuração…' : 'Salvar todos os votos em papel'}</button></div>
-      </section>{tally.requiresAdminSelection && <div className="message message--warning"><strong>Defina os eleitos.</strong> Mais candidatos atingiram a maioria do que há vagas.<div className="admin-choices compact">{tally.candidates.filter((candidate) => candidate.qualified).map((candidate) => <label key={candidate.id}><input type="checkbox" checked={winners.includes(candidate.id)} onChange={() => setWinners((current) => current.includes(candidate.id) ? current.filter((id) => id !== candidate.id) : current.length < closed.seatsOpen ? [...current, candidate.id] : current)} /><span>{candidate.name}</span></label>)}</div></div>}<div className="action-footer"><p>Confira a apuração e publique para liberar a próxima etapa.</p><button className="button button--primary" disabled={busy || (tally.requiresAdminSelection && winners.length !== closed.seatsOpen)} onClick={() => act(() => request(`/admin/scrutinies/${closed.id}/publish`, { method: 'POST', body: JSON.stringify({ winnerIds: winners }) }, true), 'Resultado publicado. A próxima etapa já está disponível na timeline.')}>Aprovar e publicar resultado</button></div>
+      </section>{tally.requiresAdminSelection && <div className="message message--warning"><strong>Defina os candidatos aprovados.</strong> Mais candidatos atingiram a maioria do que há vagas.<div className="admin-choices compact">{tally.candidates.filter((candidate) => candidate.qualified).map((candidate) => <label key={candidate.id}><input type="checkbox" checked={winners.includes(candidate.id)} onChange={() => setWinners((current) => current.includes(candidate.id) ? current.filter((id) => id !== candidate.id) : current.length < closed.seatsOpen ? [...current, candidate.id] : current)} /><span>{candidate.name}</span></label>)}</div></div>}
+      {winners.length > 0 && <section className="acceptance-panel stack"><div><p className="eyebrow">Aceitação do cargo</p><h3>Confirme a resposta de cada candidato aprovado</h3><p>Quem não aceitar será retirado dos próximos escrutínios e não preencherá a vaga.</p></div><div className="acceptance-list">{winners.map((candidateId) => {
+        const candidate = tally.candidates.find((item) => item.id === candidateId);
+        if (!candidate) return null;
+        return <fieldset key={candidateId}><legend>{candidate.name} aceita a eleição?</legend><label><input type="radio" name={`acceptance-${candidateId}`} checked={acceptances[candidateId] === true} onChange={() => setAcceptances((current) => ({ ...current, [candidateId]: true }))} />Sim, aceitou</label><label><input type="radio" name={`acceptance-${candidateId}`} checked={acceptances[candidateId] === false} onChange={() => setAcceptances((current) => ({ ...current, [candidateId]: false }))} />Não aceitou</label></fieldset>;
+      })}</div></section>}
+      <div className="action-footer"><p>{winners.length > 0 ? 'Confirme todas as respostas antes de publicar.' : 'Confira a apuração e publique para liberar a próxima etapa.'}</p><button className="button button--primary" disabled={busy || !winnerSelectionComplete || !acceptanceComplete} onClick={() => act(() => request(`/admin/scrutinies/${closed.id}/publish`, { method: 'POST', body: JSON.stringify({ winnerIds: winners, acceptances: winners.map((candidateId) => ({ candidateId, accepted: acceptances[candidateId] })) }) }, true), 'Resultado publicado. A próxima etapa já está disponível na timeline.')}>Aprovar e publicar resultado</button></div>
     </section>;
     if (next?.available && step.key === `${next.office}-${next.roundNumber}`) return <section className="panel stack action-panel timeline-action-panel"><div className="action-panel-heading"><div><p className="eyebrow">Próxima ação</p><h2>Abrir o {next.roundNumber}º escrutínio de {officeName(next.office!, true)}</h2><p>{next.seatsOpen} vaga(s) restante(s) · até {next.maxMarks} escolha(s) · maioria de {next.majorityRequired} votos.</p></div><span className="action-badge">Pronto para abrir</span></div>{next.roundNumber === 3 && <><p className={next.tiedAtCutoff ? 'message message--warning' : 'message'}>{next.tiedAtCutoff ? 'Há empate no corte. A mesa deve escolher os finalistas.' : 'Confira os finalistas mais votados no segundo escrutínio.'}</p><div className="admin-choices">{next.candidates?.map((candidate) => <label key={candidate.id}><input type="checkbox" checked={finalists.includes(candidate.id)} onChange={() => setFinalists((current) => current.includes(candidate.id) ? current.filter((id) => id !== candidate.id) : current.length < next.finalistLimit! ? [...current, candidate.id] : current)} /><span>{candidate.name}<small>{candidate.previousVotes} voto(s) no 2º</small></span></label>)}</div></>}<div className="action-footer"><p>Ao abrir, as senhas poderão votar imediatamente.</p><button className="button button--primary" disabled={busy || (next.roundNumber === 3 && finalists.length !== next.finalistLimit)} onClick={() => act(() => request(`/admin/elections/${election.id}/scrutinies`, { method: 'POST', body: JSON.stringify({ candidateIds: finalists }) }, true), `${next.roundNumber}º escrutínio aberto.`)}>Abrir escrutínio</button></div></section>;
     if (step.key === 'finished' && election.status === 'finished') return <section className="panel final-report timeline-action-panel"><div><p className="eyebrow">Processo concluído</p><h2>Resultado pronto para a ata</h2><p>Baixe o PDF final, sem cabeçalhos ou endereços adicionados pelo navegador.</p></div><button className="button button--secondary" disabled={busy} onClick={() => act(() => downloadMinutesReport(election.id), 'PDF do resultado gerado.')}>{busy ? 'Gerando PDF…' : 'Baixar PDF para a ata'}</button></section>;
