@@ -303,7 +303,7 @@ test('três escrutínios, escolha no empate de corte e sequência para diáconos
   expect((await reportResponse.body()).subarray(0, 4).toString()).toBe('%PDF');
 });
 
-test('mesa escolhe os eleitos quando aprovados excedem as vagas', async ({ request }, testInfo) => {
+test('empate no corte confirma os primeiros e leva os empatados ao próximo escrutínio', async ({ request }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'), 'Fluxo de API executado uma vez');
   const election = await createElection(request, { elderSeats: 2, elderCandidates: ['A', 'B', 'C'] });
   await generateCodes(request, election.id, 5);
@@ -319,17 +319,32 @@ test('mesa escolhe os eleitos quando aprovados excedem as vagas', async ({ reque
   }
   const tallyResponse = await request.get(`${api}/admin/scrutinies/${scrutiny.id}/tally`, { headers: adminHeaders });
   const tally = await tallyResponse.json();
-  expect(tally.requiresAdminSelection).toBe(true);
-  const rejected = await request.post(`${api}/admin/scrutinies/${scrutiny.id}/publish`, { headers: adminHeaders, data: {} });
+  expect(tally.suggestedWinnerIds).toEqual([candidates[0].id]);
+  expect(tally.cutoffTie).toEqual({
+    candidateIds: [candidates[1].id, candidates[2].id],
+    seatCount: 1,
+    votes: 3
+  });
+  const rejected = await request.post(`${api}/admin/scrutinies/${scrutiny.id}/publish`, {
+    headers: adminHeaders,
+    data: {
+      winnerIds: [candidates[0].id, candidates[2].id],
+      acceptances: [
+        { candidateId: candidates[0].id, accepted: true },
+        { candidateId: candidates[2].id, accepted: true }
+      ]
+    }
+  });
   expect(rejected.status()).toBe(400);
   const result = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
-    winnerIds: [candidates[0].id, candidates[2].id],
-    acceptances: [
-      { candidateId: candidates[0].id, accepted: true },
-      { candidateId: candidates[2].id, accepted: true }
-    ]
+    winnerIds: [candidates[0].id],
+    acceptances: [{ candidateId: candidates[0].id, accepted: true }]
   })).json();
-  expect(result.candidates.filter((candidate: { elected: boolean }) => candidate.elected).map((candidate: { name: string }) => candidate.name)).toEqual(['A', 'C']);
+  expect(result.candidates.filter((candidate: { elected: boolean }) => candidate.elected).map((candidate: { name: string }) => candidate.name)).toEqual(['A']);
+
+  const second = await next(request, election.id);
+  expect(second).toMatchObject({ roundNumber: 2, seatsOpen: 1, maxMarks: 1 });
+  expect(second.candidates.map((candidate: { name: string }) => candidate.name)).toEqual(['B', 'C']);
 });
 
 test('candidato que não aceita sai dos próximos escrutínios sem preencher a vaga', async ({ request }, testInfo) => {

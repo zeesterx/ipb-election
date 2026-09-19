@@ -66,4 +66,5 @@ export interface Tally {
   paperBallots: Array<{ id: string; blankCount: number; candidateIds: string[] }>;
   suggestedWinnerIds: string[];
   requiresAdminSelection: boolean;
+  cutoffTie: { candidateIds: string[]; seatCount: number; votes: number } | null;
 }

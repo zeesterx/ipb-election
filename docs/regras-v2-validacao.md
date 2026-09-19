@@ -197,4 +197,4 @@ Para maximizar a facilidade de uso no celular:
 
 - No empate do corte para os finalistas do terceiro escrutínio, a mesa escolhe quem seguirá; a decisão fica no histórico.
 - Cada cargo terá no máximo três escrutínios. Se restar vaga sem candidato com maioria, a vaga permanece aberta.
-- Por segurança matemática e operacional, se excepcionalmente mais candidatos alcançarem a maioria do que houver vagas, a mesa escolherá os eleitos somente entre os que alcançaram a maioria; a decisão ficará registrada. Essa proteção é necessária porque, quando cada cédula admite várias escolhas, esse cenário é matematicamente possível.
+- Se mais candidatos alcançarem a maioria do que houver vagas, serão confirmados os mais votados que estiverem inequivocamente acima da linha de corte. Havendo empate nessa linha, nenhum dos empatados ocupará a vaga naquele escrutínio; todos permanecerão elegíveis para disputar as vagas abertas no escrutínio seguinte. No terceiro escrutínio, eventual vaga ainda empatada permanecerá aberta. Essa proteção é necessária porque, quando cada cédula admite várias escolhas, mais candidatos do que vagas podem alcançar a maioria.

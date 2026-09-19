@@ -8,7 +8,7 @@ import {
 import { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { Database } from './database';
 import { generateCode, normalizeCode } from './code-utils';
-import { blankVotes, finalistLimit, majorityRequired } from './election-rules';
+import { blankVotes, finalistLimit, majorityRequired, resolveWinnersAtCutoff } from './election-rules';
 import { createPasswordPdf } from './password-pdf';
 import { createMinutesPdf } from './minutes-pdf';
 import { config } from './config';
@@ -788,6 +788,7 @@ export class ElectionsService {
       qualified: Number(candidate.votes) >= scrutiny.majority_required
     }));
     const qualified = candidates.filter((candidate) => candidate.qualified);
+    const cutoff = resolveWinnersAtCutoff(qualified, scrutiny.seats_open);
     return {
       scrutiny: {
         id: scrutiny.id,
@@ -811,8 +812,13 @@ export class ElectionsService {
         blankCount: row.blank_count,
         candidateIds: row.candidate_ids
       })),
-      suggestedWinnerIds: qualified.slice(0, scrutiny.seats_open).map((candidate) => candidate.id),
-      requiresAdminSelection: qualified.length > scrutiny.seats_open
+      suggestedWinnerIds: cutoff.winnerIds,
+      requiresAdminSelection: false,
+      cutoffTie: cutoff.tiedCandidateIds.length > 0 ? {
+        candidateIds: cutoff.tiedCandidateIds,
+        seatCount: cutoff.tiedSeatCount,
+        votes: qualified.find((candidate) => candidate.id === cutoff.tiedCandidateIds[0])?.votes ?? 0
+      } : null
     };
   }
 
@@ -825,19 +831,12 @@ export class ElectionsService {
       if (!scrutiny) throw new NotFoundException('Escrutínio não encontrado.');
       if (scrutiny.status !== 'closed') throw new ConflictException('O escrutínio não está pronto para publicação.');
       const tally = await this.tally(scrutinyId, client);
-      const qualifiedIds = tally.candidates.filter((candidate) => candidate.qualified).map((candidate) => candidate.id);
-      let winnerIds = qualifiedIds;
-      if (qualifiedIds.length > scrutiny.seats_open) {
-        if (!requestedWinnerIds || requestedWinnerIds.length !== scrutiny.seats_open) {
-          throw new BadRequestException(`A mesa deve selecionar exatamente ${scrutiny.seats_open} eleitos entre os que atingiram a maioria.`);
-        }
-        if (requestedWinnerIds.some((id) => !qualifiedIds.includes(id))) {
-          throw new BadRequestException('Só pode ser eleito quem atingiu a maioria.');
-        }
-        winnerIds = requestedWinnerIds;
-      } else if (requestedWinnerIds &&
-        (requestedWinnerIds.length !== qualifiedIds.length || requestedWinnerIds.some((id) => !qualifiedIds.includes(id)))) {
-        throw new BadRequestException('A seleção de eleitos não corresponde aos candidatos que atingiram a maioria.');
+      const winnerIds = tally.suggestedWinnerIds;
+      if (requestedWinnerIds &&
+        (requestedWinnerIds.length !== winnerIds.length || requestedWinnerIds.some((id) => !winnerIds.includes(id)))) {
+        throw new BadRequestException(tally.cutoffTie
+          ? 'Os candidatos empatados no limite das vagas devem seguir para o próximo escrutínio.'
+          : 'A seleção de eleitos não corresponde à votação apurada.');
       }
 
       const acceptances = new Map<string, boolean>();
@@ -904,7 +903,8 @@ export class ElectionsService {
         scrutinyId,
         acceptedWinnerIds,
         declinedWinnerIds,
-        requiredManualSelection: tally.requiresAdminSelection
+        deferredTieCandidateIds: tally.cutoffTie?.candidateIds ?? [],
+        deferredTieSeats: tally.cutoffTie?.seatCount ?? 0
       });
       return this.detail(election.id, client);
     });
