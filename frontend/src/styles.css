@@ -322,17 +322,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--green-800); box
 .scrutiny-result > footer { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 1.1rem; color: var(--muted); background: #fbfcfb; font-size: .7rem; }
 .current-results-card .result-candidate em { white-space: nowrap; }
 .current-results-card { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-.projection-result-groups { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.projection-result-groups { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow: hidden; }
 .projection-result-group + .projection-result-group { border-top: 1px solid #dfe5e1; }
 .projection-result-group h4 { display: flex; align-items: center; gap: .42rem; padding: .48rem .75rem; margin: 0; color: #445149; background: #f5f7f5; font-size: .68rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .projection-result-group h4 > span { width: 18px; height: 18px; display: grid; place-items: center; color: #fff; background: #24794a; border-radius: 50%; font-size: .56rem; }
 .projection-result-group h4 small { padding: .12rem .35rem; color: #607069; background: #e4eae6; border-radius: 999px; font-size: .58rem; }
 .projection-result-list { display: grid; grid-template-columns: 1fr; }
-.current-results-card.is-dense .projection-result-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.current-results-card.is-very-dense .projection-result-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .current-results-card.is-dense .projection-result-list > div,
-.current-results-card.is-very-dense .projection-result-list > div { min-width: 0; padding-top: .42rem; padding-bottom: .42rem; border-right: 1px solid #edf0ee; }
-.declined-group { opacity: .78; }
+.current-results-card.is-very-dense .projection-result-list > div { min-width: 0; padding-top: .35rem; padding-bottom: .35rem; }
+.projection-final-empty { display: grid; min-height: 140px; place-items: center; color: var(--muted); font-size: .82rem; }
 .scrutiny-result > footer strong { color: var(--ink); font-weight: 650; }
 
 .projection-shell { min-height: 100vh; min-height: 100dvh; padding: clamp(1.2rem, 2.5vw, 2.5rem); background: linear-gradient(145deg, #f8faf8 0%, #eef3ef 100%); }
@@ -510,8 +508,6 @@ details summary { color: var(--green-800); cursor: pointer; font-size: .87rem; f
   .vote-progress--large { min-width: 0; width: 100%; }
   .projection-grid { grid-template-columns: 1fr; }
   .projection-grid .election-timeline { position: static; }
-  .current-results-card.is-dense .projection-result-list,
-  .current-results-card.is-very-dense .projection-result-list { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {

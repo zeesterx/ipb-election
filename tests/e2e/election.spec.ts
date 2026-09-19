@@ -218,7 +218,7 @@ test('acompanhamento atualiza votos, exibe lotes e publica resultados na projeç
   await expect(page.getByText('Eleito neste escrutínio')).toBeVisible();
 
   await expect(projection.getByRole('button', { name: /Eleição concluída Concluída/ })).toHaveAttribute('aria-expanded', 'true', { timeout: 8_000 });
-  await expect(projection.locator('.current-results-card').getByText('Resultado parcial · presbíteros')).toBeVisible();
+  await expect(projection.locator('.current-results-card').getByText('Resultado final · presbíteros')).toBeVisible();
   await expect(projection.getByText('Eleito no 1º')).toBeVisible();
   await expect(projection.locator('.result-ranking > div').filter({ hasText: 'André Silva' })).toContainText('2 votos');
   await expect(projection.locator('.result-ranking > div').filter({ hasText: 'André Silva' })).toContainText('66,7%');
@@ -383,12 +383,72 @@ test('empate no corte confirma oito, leva três ao próximo escrutínio e cabe n
   await page.goto(`/resultado/${election.id}`);
   const resultCard = page.locator('.current-results-card');
   await expect(resultCard.locator('.elected-group h4')).toContainText('Eleitos 8');
-  await expect(resultCard.locator('.contenders-group h4')).toContainText('Em disputa 3');
+  await expect(resultCard.locator('.current-scrutiny-group h4')).toContainText('Resultado do 1º escrutínio 3');
   await expect(resultCard.locator('.elected-group .projection-result-list > div')).toHaveCount(8);
-  await expect(resultCard.locator('.contenders-group .projection-result-list > div')).toHaveCount(3);
+  await expect(resultCard.locator('.current-scrutiny-group .projection-result-list > div')).toHaveCount(3);
+  expect(await resultCard.locator('.elected-group .projection-result-list').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
+  expect(await resultCard.locator('.current-scrutiny-group .projection-result-list').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
   const footerBox = await resultCard.locator('> footer').boundingBox();
   expect(footerBox).not.toBeNull();
   expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(720);
+});
+
+test('após o terceiro escrutínio a projeção mostra somente quem foi eleito', async ({ page, request }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'), 'Fluxo de API executado uma vez');
+  const election = await createElection(request, { elderSeats: 2, elderCandidates: ['Eleito', 'Finalista A', 'Finalista B'] });
+  await generateCodes(request, election.id, 5);
+  await adminPost(request, `/admin/elections/${election.id}/open`);
+  await adminPost(request, `/admin/elections/${election.id}/presence`, { presentMembers: 5 });
+  const detail = await (await request.get(`${api}/admin/elections/${election.id}`, { headers: adminHeaders })).json();
+  const [elected, finalistA, finalistB] = detail.candidates;
+
+  let scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+  await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: { ballotCount: 5, candidateVotes: [
+      { candidateId: elected.id, votes: 3 },
+      { candidateId: finalistA.id, votes: 1 },
+      { candidateId: finalistB.id, votes: 1 }
+    ] }
+  });
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [elected.id],
+    acceptances: [{ candidateId: elected.id, accepted: true }]
+  });
+
+  scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+  await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: { ballotCount: 5, candidateVotes: [
+      { candidateId: finalistA.id, votes: 2 },
+      { candidateId: finalistB.id, votes: 2 }
+    ] }
+  });
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, { winnerIds: [] });
+
+  scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+  await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: { ballotCount: 5, candidateVotes: [
+      { candidateId: finalistA.id, votes: 2 },
+      { candidateId: finalistB.id, votes: 2 }
+    ] }
+  });
+  const completed = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, { winnerIds: [] })).json();
+  expect(completed.status).toBe('finished');
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`/resultado/${election.id}`);
+  const resultCard = page.locator('.current-results-card');
+  await expect(resultCard.getByText('Resultado final · presbíteros')).toBeVisible();
+  await expect(resultCard.locator('.elected-group .projection-result-list > div')).toHaveCount(1);
+  await expect(resultCard.locator('.elected-group')).toContainText('Eleito');
+  await expect(resultCard.locator('.current-scrutiny-group')).toHaveCount(0);
+  await expect(resultCard).not.toContainText('Finalista A');
+  await expect(resultCard).not.toContainText('Finalista B');
 });
 
 test('candidato que não aceita sai dos próximos escrutínios sem preencher a vaga', async ({ request }, testInfo) => {
