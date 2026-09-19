@@ -11,6 +11,9 @@ const countLabel = (count: number, singular: string, plural = `${singular}s`) =>
 const percentageLabel = (value: number, total?: number | null) => total && total > 0
   ? `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format((value / total) * 100)}%`
   : '—';
+const publishedBlankCount = (scrutiny: Scrutiny) => scrutiny.status === 'published'
+  ? Math.max(0, (scrutiny.ballotCount * scrutiny.maxMarks) - scrutiny.results.reduce((sum, result) => sum + result.votes, 0))
+  : scrutiny.blankCount;
 
 const formatElectionDate = (value: string, options?: Intl.DateTimeFormatOptions) => {
   const date = new Date(`${value.slice(0, 10)}T12:00:00`);
@@ -131,6 +134,7 @@ function ElectionTimeline({ election, compact = false, renderStepContent }: { el
 }
 
 function ScrutinyResultCard({ scrutiny, presentMembers, embedded = false }: { scrutiny: Scrutiny; presentMembers?: number | null; embedded?: boolean }) {
+  const blankCount = publishedBlankCount(scrutiny);
   return <article className={`panel scrutiny-result ${embedded ? 'scrutiny-result--embedded' : ''}`}>
     <header><div><span className="result-round">{scrutiny.roundNumber}º escrutínio</span><h3>{officeName(scrutiny.office, true)}</h3></div>
       <div className="result-meta"><span><strong>{scrutiny.ballotCount} de {presentMembers ?? '—'}</strong> recebidos · {percentageLabel(scrutiny.ballotCount, presentMembers)}</span><span><strong>{scrutiny.majorityRequired}</strong> maioria</span></div></header>
@@ -141,7 +145,7 @@ function ScrutinyResultCard({ scrutiny, presentMembers, embedded = false }: { sc
         <strong>{result.votes}<small> {result.votes === 1 ? 'voto' : 'votos'} · {percentageLabel(result.votes, presentMembers)}</small></strong>
       </div>;
     })}</div>
-    <footer><span>{countLabel(scrutiny.blankCount, 'voto')} em branco</span><span>{countLabel(scrutiny.digitalCount, 'digital', 'digitais')} · {scrutiny.paperCount} em papel</span></footer>
+    <footer><span><strong>{blankCount}</strong> {blankCount === 1 ? 'voto em branco' : 'votos em branco'}</span><span>{countLabel(scrutiny.digitalCount, 'digital', 'digitais')} · {scrutiny.paperCount} em papel</span></footer>
   </article>;
 }
 
@@ -158,26 +162,33 @@ function CurrentPartialResults({ election }: { election: ElectionSummary & { pre
       .find((result) => result.candidateId === candidate.id);
     return { ...candidate, latestResult };
   }).sort((a, b) => {
-    if (a.elected !== b.elected) return a.elected ? -1 : 1;
-    if (a.declined !== b.declined) return a.declined ? 1 : -1;
     const votes = (b.latestResult?.votes ?? -1) - (a.latestResult?.votes ?? -1);
     return votes || a.displayOrder - b.displayOrder;
   });
+  const elected = candidates.filter((candidate) => candidate.elected);
+  const contenders = candidates.filter((candidate) => !candidate.elected && !candidate.declined);
+  const declined = candidates.filter((candidate) => candidate.declined);
+  const density = candidates.length > 12 ? 'is-very-dense' : candidates.length > 8 ? 'is-dense' : '';
+
+  function resultRow(candidate: (typeof candidates)[number]) {
+    const votes = candidate.latestResult?.votes;
+    const percentage = votes !== undefined && election.presentMembers ? Math.min(100, Math.round((votes / election.presentMembers) * 100)) : 0;
+    return <div className={candidate.elected ? 'is-elected' : candidate.declined ? 'is-declined' : ''} key={candidate.id}>
+      <div className="result-candidate"><span>{candidate.name}{candidate.electedRound && <em>Eleito no {candidate.electedRound}º</em>}{candidate.declinedRound && <em className="declined-label">Não aceitou</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
+      {votes === undefined ? <span className="result-awaiting">Aguardando</span> : <strong>{votes}<small> {votes === 1 ? 'voto' : 'votos'} · {percentageLabel(votes, election.presentMembers)}</small></strong>}
+    </div>;
+  }
 
   return <section className="published-results stack">
-    <div className="section-heading"><div><p className="eyebrow">Resultado parcial</p><h2>{officeName(office, true)}</h2><p>{latestScrutiny ? `Situação atual após o ${latestScrutiny.roundNumber}º escrutínio.` : 'Aguardando a publicação do primeiro resultado.'}</p></div></div>
-    <article className="panel scrutiny-result current-results-card">
-      <header><div><span className="result-round">Situação atual</span><h3>Classificação atual</h3></div>
+    <article className={`panel scrutiny-result current-results-card ${density}`}>
+      <header><div><span className="result-round">Resultado parcial · {officeName(office, true)}</span><h3>{latestScrutiny ? `${latestScrutiny.roundNumber}º escrutínio publicado` : 'Aguardando o primeiro resultado'}</h3></div>
         {latestScrutiny && <div className="result-meta"><span><strong>{latestScrutiny.ballotCount} de {election.presentMembers ?? '—'}</strong> recebidos · {percentageLabel(latestScrutiny.ballotCount, election.presentMembers)}</span><span><strong>{latestScrutiny.majorityRequired}</strong> maioria</span></div>}</header>
-      <div className="result-ranking">{candidates.map((candidate) => {
-        const votes = candidate.latestResult?.votes;
-        const percentage = votes !== undefined && election.presentMembers ? Math.min(100, Math.round((votes / election.presentMembers) * 100)) : 0;
-        return <div className={candidate.elected ? 'is-elected' : candidate.declined ? 'is-declined' : ''} key={candidate.id}>
-          <div className="result-candidate"><span>{candidate.name}{candidate.electedRound && <em>Eleito no {candidate.electedRound}º escrutínio</em>}{candidate.declinedRound && <em className="declined-label">Não aceitou no {candidate.declinedRound}º escrutínio</em>}</span><i><b style={{ width: `${percentage}%` }} /></i></div>
-          {votes === undefined ? <span className="result-awaiting">Aguardando</span> : <strong>{votes}<small> {votes === 1 ? 'voto' : 'votos'} · {percentageLabel(votes, election.presentMembers)}</small></strong>}
-        </div>;
-      })}</div>
-      {latestScrutiny && <footer><span>Atualizado após o {latestScrutiny.roundNumber}º escrutínio</span><span>{countLabel(latestScrutiny.blankCount, 'voto')} em branco</span></footer>}
+      <div className="projection-result-groups">
+        {elected.length > 0 && <section className="projection-result-group elected-group"><h4><span>✓</span> Eleitos <small>{elected.length}</small></h4><div className="result-ranking projection-result-list">{elected.map(resultRow)}</div></section>}
+        <section className="projection-result-group contenders-group"><h4>Em disputa <small>{contenders.length}</small></h4><div className="result-ranking projection-result-list">{contenders.map(resultRow)}</div></section>
+        {declined.length > 0 && <section className="projection-result-group declined-group"><h4>Não aceitaram <small>{declined.length}</small></h4><div className="result-ranking projection-result-list">{declined.map(resultRow)}</div></section>}
+      </div>
+      {latestScrutiny && <footer><span>Resultado do {latestScrutiny.roundNumber}º escrutínio</span><span><strong>{publishedBlankCount(latestScrutiny)}</strong> {publishedBlankCount(latestScrutiny) === 1 ? 'voto em branco' : 'votos em branco'}</span></footer>}
     </article>
   </section>;
 }

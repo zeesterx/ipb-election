@@ -218,8 +218,8 @@ test('acompanhamento atualiza votos, exibe lotes e publica resultados na projeç
   await expect(page.getByText('Eleito neste escrutínio')).toBeVisible();
 
   await expect(projection.getByRole('button', { name: /Eleição concluída Concluída/ })).toHaveAttribute('aria-expanded', 'true', { timeout: 8_000 });
-  await expect(projection.locator('.published-results .section-heading').getByRole('heading', { name: 'presbíteros' })).toBeVisible();
-  await expect(projection.getByText('Eleito no 1º escrutínio')).toBeVisible();
+  await expect(projection.locator('.current-results-card').getByText('Resultado parcial · presbíteros')).toBeVisible();
+  await expect(projection.getByText('Eleito no 1º')).toBeVisible();
   await expect(projection.locator('.result-ranking > div').filter({ hasText: 'André Silva' })).toContainText('2 votos');
   await expect(projection.locator('.result-ranking > div').filter({ hasText: 'André Silva' })).toContainText('66,7%');
   const publicResponse = await request.get(`${api}/voter/elections/${election.id}/results`);
@@ -227,6 +227,35 @@ test('acompanhamento atualiza votos, exibe lotes e publica resultados na projeç
   const publicResult = await publicResponse.json();
   expect(publicResult.batches).toBeUndefined();
   expect(publicResult.scrutinies[0].results[0]).toMatchObject({ name: 'André Silva', votes: 2, elected: true });
+});
+
+test('contabiliza e exibe voto em branco quando cinco cédulas somam quatro votos nominais', async ({ page, request }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'), 'Fluxo de API executado uma vez');
+  const election = await createElection(request, { elderCandidates: ['A', 'B'] });
+  await generateCodes(request, election.id, 5);
+  const codes = await getCodes(request, election.id);
+  await adminPost(request, `/admin/elections/${election.id}/presence`, { presentMembers: 5 });
+  await adminPost(request, `/admin/elections/${election.id}/open`);
+  const scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
+  const candidate = (await nextAfterStart(request, election.id)).candidates[0];
+
+  for (const code of codes.slice(0, 4)) await vote(request, code, [candidate.id]);
+  await vote(request, codes[4], []);
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
+
+  const tally = await (await request.get(`${api}/admin/scrutinies/${scrutiny.id}/tally`, { headers: adminHeaders })).json();
+  expect(tally.totals).toMatchObject({ ballotCount: 5, blankCount: 1 });
+  expect(tally.candidates.reduce((sum: number, item: { votes: number }) => sum + item.votes, 0)).toBe(4);
+
+  await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
+    winnerIds: [candidate.id],
+    acceptances: [{ candidateId: candidate.id, accepted: true }]
+  });
+  const publicResult = await (await request.get(`${api}/voter/elections/${election.id}/results`)).json();
+  expect(publicResult.scrutinies[0].blankCount).toBe(1);
+
+  await page.goto(`/resultado/${election.id}`);
+  await expect(page.locator('.current-results-card > footer')).toContainText('1 voto em branco');
 });
 
 test('três escrutínios, escolha no empate de corte e sequência para diáconos', async ({ page, request }, testInfo) => {
@@ -303,48 +332,63 @@ test('três escrutínios, escolha no empate de corte e sequência para diáconos
   expect((await reportResponse.body()).subarray(0, 4).toString()).toBe('%PDF');
 });
 
-test('empate no corte confirma os primeiros e leva os empatados ao próximo escrutínio', async ({ request }, testInfo) => {
+test('empate no corte confirma oito, leva três ao próximo escrutínio e cabe na projeção', async ({ page, request }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'), 'Fluxo de API executado uma vez');
-  const election = await createElection(request, { elderSeats: 2, elderCandidates: ['A', 'B', 'C'] });
+  const candidateNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
+  const election = await createElection(request, { elderSeats: 9, elderCandidates: candidateNames });
   await generateCodes(request, election.id, 5);
   await adminPost(request, `/admin/elections/${election.id}/open`);
   await adminPost(request, `/admin/elections/${election.id}/presence`, { presentMembers: 5 });
   const scrutiny = await (await adminPost(request, `/admin/elections/${election.id}/scrutinies`)).json();
   const candidates = (await nextAfterStart(request, election.id)).candidates;
-  const patterns = [[0, 1], [0, 1], [0, 2], [0, 2], [1, 2]];
-  // Papel só é permitido após encerrar; adiciona a distribuição A4, B3, C3.
   await adminPost(request, `/admin/scrutinies/${scrutiny.id}/close`);
-  for (const pattern of patterns) {
-    await adminPost(request, `/admin/scrutinies/${scrutiny.id}/paper-ballots`, { candidateIds: pattern.map((index) => candidates[index].id) });
-  }
+  const paper = await request.put(`${api}/admin/scrutinies/${scrutiny.id}/paper-totals`, {
+    headers: adminHeaders,
+    data: {
+      ballotCount: 5,
+      candidateVotes: candidates.map((candidate: { id: string }, index: number) => ({
+        candidateId: candidate.id,
+        votes: index < 4 ? 5 : index < 8 ? 4 : 3
+      }))
+    }
+  });
+  expect(paper.ok()).toBeTruthy();
   const tallyResponse = await request.get(`${api}/admin/scrutinies/${scrutiny.id}/tally`, { headers: adminHeaders });
   const tally = await tallyResponse.json();
-  expect(tally.suggestedWinnerIds).toEqual([candidates[0].id]);
+  expect(tally.suggestedWinnerIds).toEqual(candidates.slice(0, 8).map((candidate: { id: string }) => candidate.id));
   expect(tally.cutoffTie).toEqual({
-    candidateIds: [candidates[1].id, candidates[2].id],
+    candidateIds: candidates.slice(8).map((candidate: { id: string }) => candidate.id),
     seatCount: 1,
     votes: 3
   });
   const rejected = await request.post(`${api}/admin/scrutinies/${scrutiny.id}/publish`, {
     headers: adminHeaders,
     data: {
-      winnerIds: [candidates[0].id, candidates[2].id],
-      acceptances: [
-        { candidateId: candidates[0].id, accepted: true },
-        { candidateId: candidates[2].id, accepted: true }
-      ]
+      winnerIds: candidates.slice(0, 9).map((candidate: { id: string }) => candidate.id),
+      acceptances: candidates.slice(0, 9).map((candidate: { id: string }) => ({ candidateId: candidate.id, accepted: true }))
     }
   });
   expect(rejected.status()).toBe(400);
   const result = await (await adminPost(request, `/admin/scrutinies/${scrutiny.id}/publish`, {
-    winnerIds: [candidates[0].id],
-    acceptances: [{ candidateId: candidates[0].id, accepted: true }]
+    winnerIds: candidates.slice(0, 8).map((candidate: { id: string }) => candidate.id),
+    acceptances: candidates.slice(0, 8).map((candidate: { id: string }) => ({ candidateId: candidate.id, accepted: true }))
   })).json();
-  expect(result.candidates.filter((candidate: { elected: boolean }) => candidate.elected).map((candidate: { name: string }) => candidate.name)).toEqual(['A']);
+  expect(result.candidates.filter((candidate: { elected: boolean }) => candidate.elected).map((candidate: { name: string }) => candidate.name)).toEqual(candidateNames.slice(0, 8));
 
   const second = await next(request, election.id);
   expect(second).toMatchObject({ roundNumber: 2, seatsOpen: 1, maxMarks: 1 });
-  expect(second.candidates.map((candidate: { name: string }) => candidate.name)).toEqual(['B', 'C']);
+  expect(second.candidates.map((candidate: { name: string }) => candidate.name)).toEqual(candidateNames.slice(8));
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`/resultado/${election.id}`);
+  const resultCard = page.locator('.current-results-card');
+  await expect(resultCard.locator('.elected-group h4')).toContainText('Eleitos 8');
+  await expect(resultCard.locator('.contenders-group h4')).toContainText('Em disputa 3');
+  await expect(resultCard.locator('.elected-group .projection-result-list > div')).toHaveCount(8);
+  await expect(resultCard.locator('.contenders-group .projection-result-list > div')).toHaveCount(3);
+  const footerBox = await resultCard.locator('> footer').boundingBox();
+  expect(footerBox).not.toBeNull();
+  expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(720);
 });
 
 test('candidato que não aceita sai dos próximos escrutínios sem preencher a vaga', async ({ request }, testInfo) => {
